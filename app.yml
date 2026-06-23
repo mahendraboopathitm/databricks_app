@@ -1,12 +1,5 @@
-command:
-  - streamlit
-  - run
-  - app.py
-  - "--server.address"
-  - "0.0.0.0"
-  - "--server.port"
-  - "$DATABRICKS_APP_PORT"
+command: ['streamlit', 'run', 'app.py']
 
 env:
   - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: "b3ba19df33b9f4c0"
+    value: 'b3ba19df33b9f4c0'
