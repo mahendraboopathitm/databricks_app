@@ -1,4 +1,4 @@
-command: ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8000"]
+command: ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "$DATABRICKS_APP_PORT"]
 
 env:
   - name: DATABRICKS_WAREHOUSE_ID
