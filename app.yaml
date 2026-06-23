@@ -1,12 +1,1 @@
-command:
-  - streamlit
-  - run
-  - app.py
-  - --server.address
-  - 0.0.0.0
-  - --server.port
-  - "8000"
-
-env:
-  - name: DATABRICKS_WAREHOUSE_ID
-    value: "b3ba19df33b9f4c0"
+command: ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8000"]
