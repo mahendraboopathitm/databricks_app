@@ -1,0 +1,12 @@
+command:
+  - streamlit
+  - run
+  - app.py
+  - --server.port
+  - "8000"
+  - --server.address
+  - 0.0.0.0
+
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "/sql/1.0/warehouses/b3ba19df33b9f4c0"
