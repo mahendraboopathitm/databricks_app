@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 import streamlit as st
 from databricks import sql
@@ -73,9 +74,7 @@ try:
 
     total_orders = len(orders_df)
     total_revenue = orders_df["amount"].sum()
-    successful_payments = len(
-        payments_df[payments_df["payment_status"] == "SUCCESS"]
-    )
+    successful_payments = len(payments_df[payments_df["payment_status"] == "SUCCESS"])
     avg_delivery_time = delivery_df["delivery_time_mins"].mean()
 
     col1, col2, col3, col4 = st.columns(4)
@@ -87,13 +86,11 @@ try:
     st.divider()
 
     left, right = st.columns(2)
-
     with left:
         st.subheader("Revenue by Restaurant")
         restaurant_revenue = (
             orders_df.groupby("restaurant")["amount"]
-            .sum()
-            .sort_values(ascending=False)
+            .sum().sort_values(ascending=False)
         )
         st.bar_chart(restaurant_revenue)
 
@@ -101,157 +98,119 @@ try:
         st.subheader("Orders by City")
         city_orders = (
             orders_df.groupby("city")["order_id"]
-            .count()
-            .sort_values(ascending=False)
+            .count().sort_values(ascending=False)
         )
         st.bar_chart(city_orders)
 
     st.divider()
 
     left, right = st.columns(2)
-
     with left:
         st.subheader("Payment Method Distribution")
-        payment_method_count = (
-            payments_df["payment_method"]
-            .value_counts()
-        )
-        st.bar_chart(payment_method_count)
+        st.bar_chart(payments_df["payment_method"].value_counts())
 
     with right:
         st.subheader("Delivery Status")
-        delivery_status_count = (
-            delivery_df["delivery_status"]
-            .value_counts()
-        )
-        st.bar_chart(delivery_status_count)
+        st.bar_chart(delivery_df["delivery_status"].value_counts())
 
     st.divider()
 
     st.subheader("Latest Orders")
-    latest_orders = orders_df.sort_values(
-        by="order_timestamp",
-        ascending=False
-    )
     st.dataframe(
-        latest_orders[
-            [
-                "order_id",
-                "customer_id",
-                "restaurant",
-                "city",
-                "amount",
-                "order_status",
-                "order_timestamp"
-            ]
+        orders_df.sort_values("order_timestamp", ascending=False)[
+            ["order_id", "customer_id", "restaurant", "city", "amount", "order_status", "order_timestamp"]
         ],
         use_container_width=True
     )
 
-    # ---- CHATBOT SECTION ----
+    # ─────────────────────────────────────────────
+    # CHATBOT — powered by Databricks ai_query()
+    # ─────────────────────────────────────────────
     st.divider()
     st.subheader("🤖 Dashboard Assistant")
-    st.caption("Ask me anything about your food delivery data!")
+    st.caption("Powered by Databricks AI Functions — no external API needed!")
 
-    # Initialize chat history
+    def build_data_context() -> str:
+        order_status_counts   = orders_df["order_status"].value_counts().to_dict()
+        top_restaurants       = orders_df.groupby("restaurant")["amount"].sum().sort_values(ascending=False).head(5).to_dict()
+        top_cities            = orders_df.groupby("city")["order_id"].count().sort_values(ascending=False).head(5).to_dict()
+        avg_order_value       = orders_df["amount"].mean()
+        payment_method_dist   = payments_df["payment_method"].value_counts().to_dict()
+        payment_status_dist   = payments_df["payment_status"].value_counts().to_dict()
+        failed_payments       = len(payments_df[payments_df["payment_status"] != "SUCCESS"])
+        delivery_status_dist  = delivery_df["delivery_status"].value_counts().to_dict()
+        avg_distance          = delivery_df["distance_km"].mean()
+
+        return f"""
+ORDERS: total={total_orders}, revenue=₹{total_revenue:,.2f}, avg_order=₹{avg_order_value:,.2f}
+Order statuses: {json.dumps(order_status_counts)}
+Top restaurants by revenue: {json.dumps({k: round(v,2) for k,v in top_restaurants.items()})}
+Top cities by orders: {json.dumps(top_cities)}
+
+PAYMENTS: successful={successful_payments}, failed={failed_payments}
+Payment methods: {json.dumps(payment_method_dist)}
+Payment statuses: {json.dumps(payment_status_dist)}
+
+DELIVERIES: avg_time={avg_delivery_time:.1f} mins, avg_distance={avg_distance:.2f} km
+Delivery statuses: {json.dumps(delivery_status_dist)}
+""".strip()
+
+    def get_ai_query_response(user_question: str, data_context: str) -> str:
+        """
+        Uses Databricks ai_query() SQL function to call an LLM inside the warehouse.
+        This is completely free — it uses your existing Databricks workspace AI credits.
+        Requires: Databricks Runtime 13.1+ and a workspace with AI functions enabled.
+        """
+        prompt = (
+            f"You are a food delivery analytics assistant. "
+            f"Answer ONLY based on this data snapshot:\\n{data_context}\\n\\n"
+            f"Question: {user_question}\\n"
+            f"Be concise, use ₹ for currency, format numbers with commas."
+        )
+        # Escape single quotes in the prompt for SQL safety
+        safe_prompt = prompt.replace("'", "\\'")
+
+        ai_sql = f"""
+        SELECT ai_query(
+            'databricks-meta-llama-3-3-70b-instruct',
+            '{safe_prompt}'
+        ) AS response
+        """
+        try:
+            result_df = run_query(ai_sql)
+            return result_df["response"].iloc[0]
+        except Exception as e:
+            err = str(e)
+            if "ai_query" in err.lower() or "not found" in err.lower():
+                return (
+                    "⚠️ `ai_query()` is not enabled in your Databricks workspace. "
+                    "Ask your admin to enable **Databricks AI Functions** (requires DBR 13.1+). "
+                    "Until then, switch to the fuzzy-match version (app_v2_fuzzy.py)."
+                )
+            return f"❌ Error calling ai_query: {err}"
+
+    DATA_CONTEXT = build_data_context()
+
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            {"role": "assistant", "content": "Hi! I'm your Food Delivery Assistant 🍔 Ask me about orders, revenue, deliveries, or payments!"}
+            {"role": "assistant", "content": "Hi! I'm your Food Delivery Assistant 🍔 Ask me anything about your data!"}
         ]
 
-    # Display chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    def get_bot_response(user_input):
-        text = user_input.lower().strip()
-
-        # Total orders
-        if any(k in text for k in ["total orders", "how many orders", "order count"]):
-            return f"📦 Total orders placed: **{total_orders:,}**"
-
-        # Total revenue
-        elif any(k in text for k in ["total revenue", "how much revenue", "revenue"]):
-            return f"💰 Total revenue generated: **₹ {total_revenue:,.2f}**"
-
-        # Average delivery time
-        elif any(k in text for k in ["average delivery", "avg delivery", "delivery time", "how long"]):
-            return f"🚴 Average delivery time: **{avg_delivery_time:.1f} minutes**"
-
-        # Successful payments
-        elif any(k in text for k in ["successful payments", "payment success", "success payments"]):
-            return f"✅ Successful payments: **{successful_payments:,}**"
-
-        # Top restaurant by revenue
-        elif any(k in text for k in ["top restaurant", "best restaurant", "highest revenue restaurant"]):
-            top = restaurant_revenue.idxmax()
-            val = restaurant_revenue.max()
-            return f"🏆 Top restaurant by revenue: **{top}** with ₹ {val:,.2f}"
-
-        # Top city by orders
-        elif any(k in text for k in ["top city", "best city", "most orders city", "city"]):
-            top_city = city_orders.idxmax()
-            val = city_orders.max()
-            return f"🏙️ City with most orders: **{top_city}** with {val:,} orders"
-
-        # Payment methods
-        elif any(k in text for k in ["payment method", "how do people pay", "popular payment"]):
-            top_method = payments_df["payment_method"].value_counts().idxmax()
-            return f"💳 Most popular payment method: **{top_method}**"
-
-        # Delivery status
-        elif any(k in text for k in ["delivery status", "delivered", "pending delivery"]):
-            status_counts = delivery_df["delivery_status"].value_counts()
-            response = "📊 Delivery Status Breakdown:\n"
-            for status, count in status_counts.items():
-                response += f"- **{status}**: {count:,}\n"
-            return response
-
-        # Failed payments
-        elif any(k in text for k in ["failed payment", "payment failed", "unsuccessful"]):
-            failed = len(payments_df[payments_df["payment_status"] != "SUCCESS"])
-            return f"❌ Failed/Pending payments: **{failed:,}**"
-
-        # Average order value
-        elif any(k in text for k in ["average order", "avg order", "order value"]):
-            avg_order = orders_df["amount"].mean()
-            return f"🧾 Average order value: **₹ {avg_order:,.2f}**"
-
-        # Help
-        elif any(k in text for k in ["help", "what can you do", "commands"]):
-            return """🤖 I can answer questions like:
-- "What is the total revenue?"
-- "How many orders were placed?"
-- "What is the average delivery time?"
-- "Which is the top restaurant?"
-- "Which city has the most orders?"
-- "What is the most popular payment method?"
-- "How many successful payments?"
-- "What is the delivery status breakdown?"
-- "What is the average order value?"
-"""
-
-        # Greeting
-        elif any(k in text for k in ["hi", "hello", "hey"]):
-            return "👋 Hello! Ask me anything about your food delivery data!"
-
-        # Default
-        else:
-            return "🤔 I didn't understand that. Type **help** to see what I can answer!"
-
-    # Chat input
     if prompt := st.chat_input("Ask about your data..."):
-        # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Get and display bot response
-        response = get_bot_response(prompt)
-        st.session_state.messages.append({"role": "assistant", "content": response})
         with st.chat_message("assistant"):
-            st.markdown(response)
+            with st.spinner("Querying Databricks AI..."):
+                reply = get_ai_query_response(prompt, DATA_CONTEXT)
+            st.markdown(reply)
+
+        st.session_state.messages.append({"role": "assistant", "content": reply})
 
 except Exception as e:
     st.error("Unable to load data from Unity Catalog tables.")
