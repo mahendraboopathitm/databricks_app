@@ -1,0 +1,7 @@
+command: ['streamlit', 'run', 'app.py']
+
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: 'b3ba19df33b9f4c0'
+  - name: DATABRICKS_TOKEN
+    value: 'dapi632c4cb439d0772aa040ae2a3ce0864f'
